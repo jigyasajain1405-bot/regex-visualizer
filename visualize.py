@@ -36,7 +36,7 @@ def visualize_nfa(nfa, title="ε-NFA (Thompson's Construction)"):
             'labelloc': 't',        # Label at top
             'fontsize': '16',
             'fontname': 'Helvetica',
-            'bgcolor': '#f8f9fa'
+            'bgcolor': 'transparent'
         },
         node_attr={
             'fontname': 'Helvetica',
@@ -124,7 +124,7 @@ def visualize_dfa(dfa, title="DFA (Subset Construction)"):
             'labelloc': 't',
             'fontsize': '16',
             'fontname': 'Helvetica',
-            'bgcolor': '#f8f9fa'
+            'bgcolor': 'transparent'
         },
         node_attr={
             'fontname': 'Helvetica',
