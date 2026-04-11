@@ -39,45 +39,47 @@ st.markdown("""
     .main-title {
         font-size: 2.5em;
         font-weight: 800;
-        color: #2c3e50;
+        color: inherit;
         text-align: center;
         margin-bottom: 0.2em;
     }
     .subtitle {
         text-align: center;
-        color: #7f8c8d;
+        color: inherit;
+        opacity: 0.7;
         font-size: 1.1em;
         margin-bottom: 2em;
     }
     .result-accepted {
-        background-color: #d5f5e3;
+        background-color: rgba(46, 204, 113, 0.15);
         border-left: 5px solid #2ecc71;
         padding: 1em;
         border-radius: 6px;
         font-size: 1.3em;
         font-weight: bold;
-        color: #1e8449;
+        color: #2ecc71;
     }
     .result-rejected {
-        background-color: #fadbd8;
+        background-color: rgba(231, 76, 60, 0.15);
         border-left: 5px solid #e74c3c;
         padding: 1em;
         border-radius: 6px;
         font-size: 1.3em;
         font-weight: bold;
-        color: #922b21;
+        color: #e74c3c;
     }
     .info-box {
-        background-color: #eaf4fb;
+        background-color: rgba(52, 152, 219, 0.15);
         border-left: 5px solid #3498db;
         padding: 1em;
         border-radius: 6px;
         margin: 0.5em 0;
+        color: inherit;
     }
     .section-header {
         font-size: 1.4em;
         font-weight: 700;
-        color: #2c3e50;
+        color: inherit;
         border-bottom: 2px solid #3498db;
         padding-bottom: 0.3em;
         margin-top: 1em;
