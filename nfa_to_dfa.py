@@ -1,173 +1,223 @@
 """
 nfa_to_dfa.py
 -------------
-Converts an ε-NFA to a DFA using the Subset Construction algorithm.
+Converts an ε-NFA to a minimized DFA.
 
-Key concepts:
-  - ε-closure: the set of all states reachable from a state using ONLY ε transitions
-  - move(states, symbol): all states reachable from a set of states on a given symbol
-  - Each DFA state represents a SUBSET of NFA states
+Steps:
+  1. Subset Construction  (ε-NFA → DFA)
+  2. State Minimization   (Myhill-Nerode / table-filling)
 
-The DFA is represented as:
-  - states: list of frozenset (each is a subset of NFA states)
-  - transitions: dict { frozenset: { symbol: frozenset } }
-  - start_state: frozenset
-  - accept_states: set of frozensets (any subset containing the NFA's accept state)
-  - state_labels: dict { frozenset: readable string label }
+State labels use simple q0, q1, q2 … NOT subset labels like {q0,q2}.
 """
 
 EPSILON = 'ε'
 
 
+# ─────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────
+
 def epsilon_closure(nfa_transitions, states):
-    """
-    Compute ε-closure of a set of NFA states.
-    Returns the set of all states reachable via ε transitions (including the states themselves).
-    Uses iterative DFS/BFS.
-    """
     closure = set(states)
     stack = list(states)
-
     while stack:
-        state = stack.pop()
-        eps_targets = nfa_transitions.get(state, {}).get(EPSILON, [])
-        for next_state in eps_targets:
-            if next_state not in closure:
-                closure.add(next_state)
-                stack.append(next_state)
-
+        s = stack.pop()
+        for t in nfa_transitions.get(s, {}).get(EPSILON, []):
+            if t not in closure:
+                closure.add(t)
+                stack.append(t)
     return frozenset(closure)
 
 
 def move(nfa_transitions, states, symbol):
-    """
-    Compute the set of NFA states reachable from `states` on `symbol` (not ε).
-    """
     reachable = set()
-    for state in states:
-        targets = nfa_transitions.get(state, {}).get(symbol, [])
-        reachable.update(targets)
+    for s in states:
+        reachable.update(nfa_transitions.get(s, {}).get(symbol, []))
     return reachable
 
 
 def get_alphabet(nfa):
-    """Extract all symbols used in the NFA (excluding ε)."""
-    alphabet = set()
-    for state_transitions in nfa['transitions'].values():
-        for symbol in state_transitions:
-            if symbol != EPSILON:
-                alphabet.add(symbol)
-    return sorted(alphabet)
+    alpha = set()
+    for trans in nfa['transitions'].values():
+        for sym in trans:
+            if sym != EPSILON:
+                alpha.add(sym)
+    return sorted(alpha)
 
 
-def nfa_to_dfa(nfa):
-    """
-    Main function: Subset Construction to convert ε-NFA → DFA.
+# ─────────────────────────────────────────────
+# Subset Construction
+# ─────────────────────────────────────────────
 
-    Returns a dict:
-      - dfa_transitions: { frozenset → { symbol → frozenset } }
-      - start_state: frozenset
-      - accept_states: set of frozenset
-      - all_states: list of all DFA states (frozensets)
-      - alphabet: list of input symbols
-      - state_labels: { frozenset → display string }
-    """
-    transitions = nfa['transitions']
-    nfa_accept = nfa['accept']
-    alphabet = get_alphabet(nfa)
+def subset_construction(nfa):
+    trans  = nfa['transitions']
+    accept = nfa['accept']
+    alpha  = get_alphabet(nfa)
 
-    # DFA start state = ε-closure of NFA start state
-    start = epsilon_closure(transitions, {nfa['start']})
-
-    # BFS / worklist algorithm
-    unprocessed = [start]
+    start = epsilon_closure(trans, {nfa['start']})
+    queue = [start]
     visited = {start}
-    dfa_transitions = {}
+    dfa_trans = {}
     accept_states = set()
 
-    while unprocessed:
-        current = unprocessed.pop(0)
-
-        # Check if this DFA state is an accept state
-        if nfa_accept in current:
-            accept_states.add(current)
-
-        dfa_transitions[current] = {}
-
-        for symbol in alphabet:
-            # Compute move then ε-closure
-            moved = move(transitions, current, symbol)
-            next_state = epsilon_closure(transitions, moved)
-
-            if not next_state:
-                # Dead/trap state — we can skip or represent as empty set
-                next_state = frozenset()
-
-            dfa_transitions[current][symbol] = next_state
-
-            if next_state and next_state not in visited:
-                visited.add(next_state)
-                unprocessed.append(next_state)
-
-    # Build readable labels for DFA states: {q0,q1} → "D0", "D1", etc.
-    all_states = list(visited)
-    state_labels = {}
-    for i, state in enumerate(all_states):
-        state_labels[state] = f"D{i}"
-
-    # Label the start state clearly
-    state_labels[start] = "D0 (start)"
+    while queue:
+        cur = queue.pop(0)
+        if accept in cur:
+            accept_states.add(cur)
+        dfa_trans[cur] = {}
+        for sym in alpha:
+            nxt = epsilon_closure(trans, move(trans, cur, sym))
+            dfa_trans[cur][sym] = nxt if nxt else frozenset()
+            if nxt and nxt not in visited:
+                visited.add(nxt)
+                queue.append(nxt)
 
     return {
-        'dfa_transitions': dfa_transitions,
-        'start_state': start,
+        'raw_trans': dfa_trans,
+        'start': start,
         'accept_states': accept_states,
-        'all_states': all_states,
-        'alphabet': alphabet,
-        'state_labels': state_labels
+        'all_states': list(visited),
+        'alphabet': alpha,
     }
 
 
+# ─────────────────────────────────────────────
+# DFA Minimization (Myhill-Nerode table-filling)
+# ─────────────────────────────────────────────
+
+def minimize_dfa(raw):
+    states       = raw['all_states']
+    alpha        = raw['alphabet']
+    accept_set   = raw['accept_states']
+    raw_trans    = raw['raw_trans']
+    start        = raw['start']
+
+    # Remove unreachable states
+    reachable = set()
+    queue = [start]
+    while queue:
+        s = queue.pop()
+        if s in reachable:
+            continue
+        reachable.add(s)
+        for sym in alpha:
+            nxt = raw_trans.get(s, {}).get(sym, frozenset())
+            if nxt and nxt not in reachable:
+                queue.append(nxt)
+    states = [s for s in states if s in reachable]
+
+    if not states:
+        return raw  # nothing to minimize
+
+    # Initial partition: accepting vs non-accepting
+    acc     = frozenset(s for s in states if s in accept_set)
+    non_acc = frozenset(s for s in states if s not in accept_set)
+    partition = set()
+    if acc:     partition.add(acc)
+    if non_acc: partition.add(non_acc)
+
+    def get_group(state, part):
+        for g in part:
+            if state in g:
+                return g
+        return None
+
+    # Refine partition
+    changed = True
+    while changed:
+        changed = False
+        new_part = set()
+        for group in partition:
+            splits = {}
+            for s in group:
+                sig = tuple(
+                    id(get_group(raw_trans.get(s, {}).get(sym, frozenset()), partition))
+                    if raw_trans.get(s, {}).get(sym, frozenset()) else -1
+                    for sym in alpha
+                )
+                splits.setdefault(sig, set()).add(s)
+            for sub in splits.values():
+                new_part.add(frozenset(sub))
+            if len(splits) > 1:
+                changed = True
+        partition = new_part
+
+    # Build minimized DFA
+    # Representative of each group = first element (sorted)
+    def rep(group):
+        return sorted(group, key=lambda x: sorted(x))[0]
+
+    # Map each original state → its group representative
+    state_to_rep = {}
+    for group in partition:
+        r = rep(group)
+        for s in group:
+            state_to_rep[s] = r
+
+    min_start   = state_to_rep[start]
+    min_states  = list(set(state_to_rep.values()))
+    min_accept  = set(state_to_rep[s] for s in states if s in accept_set)
+    min_trans   = {}
+    for group in partition:
+        r = rep(group)
+        min_trans[r] = {}
+        for sym in alpha:
+            raw_nxt = raw_trans.get(r, {}).get(sym, frozenset())
+            if raw_nxt and raw_nxt in state_to_rep:
+                min_trans[r][sym] = state_to_rep[raw_nxt]
+            else:
+                min_trans[r][sym] = frozenset()
+
+    # Assign clean labels q0, q1, q2 …  (start = q0)
+    ordered = [min_start] + [s for s in min_states if s != min_start]
+    labels  = {s: f"q{i}" for i, s in enumerate(ordered)}
+
+    return {
+        'dfa_transitions': min_trans,
+        'start_state':     min_start,
+        'accept_states':   min_accept,
+        'all_states':      ordered,
+        'alphabet':        alpha,
+        'state_labels':    labels,
+    }
+
+
+def nfa_to_dfa(nfa):
+    """Full pipeline: NFA → subset DFA → minimized DFA."""
+    raw = subset_construction(nfa)
+    return minimize_dfa(raw)
+
+
+# ─────────────────────────────────────────────
+# Simulation
+# ─────────────────────────────────────────────
+
 def simulate_dfa(dfa, input_string):
-    """
-    Simulate the DFA on an input string.
-    Returns (accepted: bool, path: list of state labels)
-    """
     current = dfa['start_state']
-    path = [dfa['state_labels'].get(current, str(set(current)))]
+    labels  = dfa['state_labels']
+    path    = [labels.get(current, '?')]
 
-    for symbol in input_string:
-        if symbol not in dfa['alphabet']:
-            return False, path + [f"[ERROR: '{symbol}' not in alphabet]"]
+    for sym in input_string:
+        if sym not in dfa['alphabet']:
+            return False, path + [f"['{sym}' not in alphabet]"]
+        nxt = dfa['dfa_transitions'].get(current, {}).get(sym, frozenset())
+        if not nxt:
+            return False, path + ["[dead state]"]
+        current = nxt
+        path.append(labels.get(current, '?'))
 
-        transitions = dfa['dfa_transitions'].get(current, {})
-        next_state = transitions.get(symbol, frozenset())
-
-        if not next_state:
-            return False, path + ["[DEAD STATE]"]
-
-        current = next_state
-        path.append(dfa['state_labels'].get(current, str(set(current))))
-
-    accepted = current in dfa['accept_states']
-    return accepted, path
+    return current in dfa['accept_states'], path
 
 
 def simulate_nfa(nfa, input_string):
-    """
-    Simulate the ε-NFA on an input string using subset construction on-the-fly.
-    Returns (accepted: bool, path: list of state set descriptions)
-    """
-    transitions = nfa['transitions']
-    current_states = epsilon_closure(transitions, {nfa['start']})
-    path = [f"{{{', '.join(sorted(current_states))}}}"]
+    trans = nfa['transitions']
+    cur   = epsilon_closure(trans, {nfa['start']})
+    path  = ["{" + ", ".join(sorted(cur)) + "}"]
 
-    for symbol in input_string:
-        moved = move(transitions, current_states, symbol)
-        current_states = epsilon_closure(transitions, moved)
-        path.append(f"{{{', '.join(sorted(current_states))}}}")
-        if not current_states:
+    for sym in input_string:
+        cur = epsilon_closure(trans, move(trans, cur, sym))
+        path.append("{" + ", ".join(sorted(cur)) + "}")
+        if not cur:
             return False, path
 
-    accepted = nfa['accept'] in current_states
-    return accepted, path
+    return nfa['accept'] in cur, path
