@@ -7,8 +7,14 @@ Run with:  streamlit run main.py
 
 import streamlit as st
 import pandas as pd
+import graphviz
 
-from regex_to_nfa import regex_to_nfa
+from regex_to_nfa import (
+    regex_to_nfa, new_state, reset_states,
+    nfa_for_symbol, nfa_concatenation, nfa_union,
+    nfa_kleene_star, nfa_plus, nfa_optional,
+    EPSILON
+)
 from nfa_to_dfa import nfa_to_dfa, simulate_dfa, simulate_nfa
 from visualize import visualize_nfa, visualize_dfa, get_nfa_table, get_dfa_table
 
@@ -19,19 +25,55 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.markdown("""
+# ── Theme toggle ──
+if 'dark_mode' not in st.session_state:
+    st.session_state['dark_mode'] = False
+
+# ── Dynamic CSS based on theme ──
+def get_css(dark):
+    if dark:
+        bg        = "#0f0f1a"
+        card_bg   = "#1a1a2e"
+        text      = "#e2e8f0"
+        text_muted= "#94a3b8"
+        border    = "rgba(168,85,247,0.3)"
+        step_bg   = "rgba(168,85,247,0.08)"
+        code_bg   = "rgba(168,85,247,0.15)"
+        info_bg   = "rgba(168,85,247,0.1)"
+        toggle_bg = "#1e1b4b"
+    else:
+        bg        = "#fafafa"
+        card_bg   = "#ffffff"
+        text      = "#1e293b"
+        text_muted= "#64748b"
+        border    = "rgba(168,85,247,0.25)"
+        step_bg   = "rgba(168,85,247,0.05)"
+        code_bg   = "rgba(168,85,247,0.08)"
+        info_bg   = "rgba(168,85,247,0.07)"
+        toggle_bg = "#ede9fe"
+
+    return f"""
 <style>
-    /* ── Google Font ── */
     @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Poppins:wght@400;600;800&display=swap');
 
-    /* ── Global ── */
-    html, body, [class*="css"] {
-        font-family: 'Poppins', sans-serif;
-    }
+    html, body, [class*="css"] {{
+        font-family: 'Poppins', sans-serif !important;
+    }}
 
-    /* ── Title ── */
-    .main-title {
-        font-size: 2.6em;
+    /* Page background */
+    .stApp {{
+        background-color: {bg} !important;
+    }}
+
+    /* Sidebar */
+    section[data-testid="stSidebar"] {{
+        background-color: {card_bg} !important;
+        border-right: 1px solid {border} !important;
+    }}
+
+    /* Title */
+    .main-title {{
+        font-size: 2.5em;
         font-weight: 800;
         text-align: center;
         background: linear-gradient(135deg, #a855f7, #06b6d4);
@@ -39,116 +81,128 @@ st.markdown("""
         -webkit-text-fill-color: transparent;
         background-clip: text;
         margin-bottom: 0.1em;
-        padding-top: 0.5em;
-    }
-    .subtitle {
+        padding-top: 0.3em;
+    }}
+    .subtitle {{
         text-align: center;
-        color: inherit;
-        opacity: 0.6;
-        font-size: 1em;
+        color: {text_muted};
+        font-size: 0.95em;
         margin-bottom: 1.5em;
-        letter-spacing: 0.05em;
-    }
+        letter-spacing: 0.04em;
+    }}
 
-    /* ── Success/Info boxes ── */
-    .result-accepted {
-        background: linear-gradient(135deg, rgba(16,185,129,0.15), rgba(6,182,212,0.1));
+    /* Theme toggle bar */
+    .theme-bar {{
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        padding: 6px 0 10px 0;
+        gap: 8px;
+        font-size: 13px;
+        color: {text_muted};
+    }}
+
+    /* Result boxes */
+    .result-accepted {{
+        background: rgba(16,185,129,0.12);
         border-left: 5px solid #10b981;
         padding: 1em 1.2em;
         border-radius: 10px;
-        font-size: 1.2em;
+        font-size: 1.15em;
         font-weight: 600;
         color: #10b981;
         margin: 0.5em 0;
-    }
-    .result-rejected {
-        background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(168,85,247,0.1));
+    }}
+    .result-rejected {{
+        background: rgba(239,68,68,0.12);
         border-left: 5px solid #ef4444;
         padding: 1em 1.2em;
         border-radius: 10px;
-        font-size: 1.2em;
+        font-size: 1.15em;
         font-weight: 600;
         color: #ef4444;
         margin: 0.5em 0;
-    }
-    .info-box {
-        background: rgba(168,85,247,0.08);
+    }}
+
+    /* Info box */
+    .info-box {{
+        background: {info_bg};
         border-left: 4px solid #a855f7;
         padding: 0.9em 1.1em;
         border-radius: 0 10px 10px 0;
         margin: 0.6em 0;
-        color: inherit;
+        color: {text};
         font-size: 0.95em;
-    }
-    .section-header {
-        font-size: 1.3em;
+    }}
+
+    /* Section header */
+    .section-header {{
+        font-size: 1.25em;
         font-weight: 700;
-        color: inherit;
+        color: {text};
         border-bottom: 2px solid #a855f7;
         padding-bottom: 0.3em;
         margin-top: 1em;
         margin-bottom: 0.8em;
-    }
+    }}
 
-    /* ── Construction step boxes ── */
-    .step-box {
-        background: rgba(168,85,247,0.06);
-        border: 1px solid rgba(168,85,247,0.25);
+    /* Step box */
+    .step-box {{
+        background: {step_bg};
+        border: 1px solid {border};
         border-radius: 12px;
         padding: 1em 1.3em;
         margin: 0.8em 0;
-        color: inherit;
-    }
-    .step-number {
+        color: {text};
+    }}
+    .step-number {{
         font-size: 1.05em;
         font-weight: 700;
         color: #a855f7;
         margin-bottom: 0.4em;
-    }
+    }}
+    .step-desc {{
+        color: {text_muted};
+        font-size: 0.9em;
+        margin-bottom: 0.6em;
+    }}
 
-    /* ── Code blocks ── */
-    code {
+    /* Code */
+    code {{
         font-family: 'Fira Code', monospace !important;
-        background: rgba(168,85,247,0.1) !important;
+        background: {code_bg} !important;
         color: #a855f7 !important;
         border-radius: 4px;
         padding: 0.1em 0.4em;
-    }
+    }}
 
-    /* ── Sidebar ── */
-    section[data-testid="stSidebar"] {
-        background: rgba(168,85,247,0.04);
-        border-right: 1px solid rgba(168,85,247,0.15);
-    }
-
-    /* ── Buttons ── */
-    div[data-testid="stButton"] button {
-        border-radius: 8px !important;
-        font-family: 'Poppins', sans-serif !important;
-        font-weight: 600 !important;
-        transition: all 0.2s ease !important;
-    }
-    div[data-testid="stButton"] button[kind="primary"] {
+    /* Primary button */
+    div[data-testid="stButton"] button[kind="primary"] {{
         background: linear-gradient(135deg, #a855f7, #06b6d4) !important;
         border: none !important;
         color: white !important;
-    }
-    div[data-testid="stButton"] button[kind="primary"]:hover {
-        opacity: 0.9;
-        transform: translateY(-1px);
-    }
-
-    /* ── Tabs ── */
-    div[data-testid="stTabs"] button {
-        font-family: 'Poppins', sans-serif !important;
+        border-radius: 8px !important;
         font-weight: 600 !important;
-    }
-    div[data-testid="stTabs"] button[aria-selected="true"] {
+    }}
+
+    /* Tabs */
+    div[data-testid="stTabs"] button[aria-selected="true"] {{
         color: #a855f7 !important;
         border-bottom-color: #a855f7 !important;
-    }
+    }}
 </style>
-""", unsafe_allow_html=True)
+"""
+
+dark = st.session_state['dark_mode']
+st.markdown(get_css(dark), unsafe_allow_html=True)
+
+# ── Theme toggle button at top right ──
+tcol1, tcol2 = st.columns([6, 1])
+with tcol2:
+    mode_label = "☀️ Light" if dark else "🌙 Dark"
+    if st.button(mode_label, key="theme_toggle", use_container_width=True):
+        st.session_state['dark_mode'] = not dark
+        st.rerun()
 
 # ── Header ──
 st.markdown('<div class="main-title">⚡ Regex → ε-NFA & DFA Visualizer</div>', unsafe_allow_html=True)
@@ -161,7 +215,7 @@ with st.sidebar:
 1. **Enter a Regex** in the input box
 2. Click **Convert** to generate automata
 3. View the **ε-NFA** and **DFA** diagrams
-4. Check **Construction Steps** to learn how
+4. Check **Construction Steps** for step diagrams
 5. **Simulate** a string to test acceptance
     """)
     st.markdown("### ✅ Supported Operators")
@@ -204,7 +258,6 @@ with col1:
         "⚡ Enter Regular Expression:",
         value=st.session_state.get('regex_input', '(a|b)*abb'),
         placeholder="e.g. (a|b)*abb",
-        help="Use letters, |, *, +, ?, and parentheses"
     )
 with col2:
     st.write("")
@@ -218,6 +271,60 @@ with col3:
 if clear_btn:
     st.session_state['regex_input'] = ''
     st.rerun()
+
+
+# ── Helper: build small demo NFA diagrams for each step ──
+def make_step_diagram(title, states, transitions, start, accept):
+    """Build a small Graphviz diagram for a construction step."""
+    dot = graphviz.Digraph(
+        graph_attr={
+            'rankdir': 'LR',
+            'label': title,
+            'labelloc': 't',
+            'fontsize': '13',
+            'fontname': 'Helvetica',
+            'bgcolor': 'transparent',
+            'size': '6,2',
+            'ratio': 'compress'
+        },
+        node_attr={'fontname': 'Helvetica', 'fontsize': '11'},
+        edge_attr={'fontname': 'Helvetica', 'fontsize': '10'}
+    )
+    dot.node('__s__', shape='none', label='', width='0', height='0')
+    dot.edge('__s__', start, label='', style='bold', color='#2ecc71')
+    for state in states:
+        if state == accept:
+            dot.node(state, state, shape='doublecircle', style='filled',
+                     fillcolor='#2ecc71', color='#27ae60', fontcolor='white')
+        elif state == start:
+            dot.node(state, state, shape='circle', style='filled',
+                     fillcolor='#3498db', color='#2980b9', fontcolor='white')
+        else:
+            dot.node(state, state, shape='circle', style='filled',
+                     fillcolor='#ecf0f1', color='#bdc3c7', fontcolor='#2c3e50')
+    for s, trans in transitions.items():
+        for sym, targets in trans.items():
+            for t in targets:
+                if sym == EPSILON:
+                    dot.edge(s, t, label='ε', style='dashed',
+                             color='#95a5a6', fontcolor='#7f8c8d')
+                else:
+                    dot.edge(s, t, label=sym,
+                             color='#e74c3c', fontcolor='#c0392b', penwidth='2')
+    return dot
+
+
+def show_step_diagram(title, nfa_dict):
+    """Render a step diagram from an NFA dict."""
+    d = make_step_diagram(
+        title,
+        sorted(nfa_dict['states']),
+        nfa_dict['transitions'],
+        nfa_dict['start'],
+        nfa_dict['accept']
+    )
+    st.graphviz_chart(d.source, use_container_width=True)
+
 
 # ── Main Logic ──
 if regex_input and (convert_btn or st.session_state.get('last_regex') == regex_input):
@@ -239,7 +346,7 @@ if regex_input and (convert_btn or st.session_state.get('last_regex') == regex_i
             "📖 Construction Steps"
         ])
 
-        # ── Tab 1: NFA ──
+        # ── Tab 1 ──
         with tab1:
             st.markdown('<div class="section-header">ε-NFA via Thompson\'s Construction</div>', unsafe_allow_html=True)
             st.markdown('<div class="info-box">Thompson\'s Construction builds the ε-NFA recursively. Each operator adds new states and ε-transitions (dashed arrows).</div>', unsafe_allow_html=True)
@@ -249,21 +356,19 @@ if regex_input and (convert_btn or st.session_state.get('last_regex') == regex_i
                 st.write(f"**Start state:** `{nfa['start']}`")
                 st.write(f"**Accept state:** `{nfa['accept']}`")
                 st.write(f"**Total states:** {len(nfa['states'])}")
-                st.write(f"**All states:** {sorted(nfa['states'])}")
 
-        # ── Tab 2: DFA ──
+        # ── Tab 2 ──
         with tab2:
             st.markdown('<div class="section-header">DFA via Subset Construction</div>', unsafe_allow_html=True)
-            st.markdown('<div class="info-box">Each DFA state (labeled D0, D1...) represents a set of NFA states reachable after reading the same input.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="info-box">Each DFA state represents a set of NFA states reachable after reading the same input prefix.</div>', unsafe_allow_html=True)
             dfa_dot = visualize_dfa(dfa, title=f"DFA for: {regex_input}")
             st.graphviz_chart(dfa_dot.source, use_container_width=True)
             with st.expander("ℹ️ DFA Details"):
                 st.write(f"**Start state:** `{dfa['state_labels'][dfa['start_state']]}`")
                 st.write(f"**Accept states:** `{[dfa['state_labels'][s] for s in dfa['accept_states']]}`")
                 st.write(f"**Total states:** {len(dfa['all_states'])}")
-                st.write(f"**Alphabet:** `{dfa['alphabet']}`")
 
-        # ── Tab 3: Tables ──
+        # ── Tab 3 ──
         with tab3:
             st.markdown('<div class="section-header">Transition Tables</div>', unsafe_allow_html=True)
             col_a, col_b = st.columns(2)
@@ -278,7 +383,7 @@ if regex_input and (convert_btn or st.session_state.get('last_regex') == regex_i
                 if dfa_rows:
                     st.dataframe(pd.DataFrame(dfa_rows).set_index('DFA State'), use_container_width=True)
 
-        # ── Tab 4: Simulate ──
+        # ── Tab 4 ──
         with tab4:
             st.markdown('<div class="section-header">▶️ Simulate an Input String</div>', unsafe_allow_html=True)
             sim_col1, sim_col2 = st.columns([3, 1])
@@ -319,57 +424,123 @@ if regex_input and (convert_btn or st.session_state.get('last_regex') == regex_i
                     if results:
                         st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
 
-        # ── Tab 5: Construction Steps ──
+        # ── Tab 5: Construction Steps with diagrams ──
         with tab5:
             st.markdown('<div class="section-header">📖 Step-by-Step Thompson\'s Construction</div>', unsafe_allow_html=True)
-            st.markdown('<div class="info-box">Thompson\'s Construction breaks the regex into smaller parts and builds the ε-NFA piece by piece. Below are the exact steps applied to your regex.</div>', unsafe_allow_html=True)
-
+            st.markdown('<div class="info-box">Each step below shows the construction rule AND a live diagram of how that NFA piece looks for your regex characters.</div>', unsafe_allow_html=True)
             st.markdown(f"### Your Regex: `{regex_input}`")
             st.divider()
 
-            # Step 1
-            st.markdown('<div class="step-box"><div class="step-number">📌 Step 1: Identify Base Symbols</div>', unsafe_allow_html=True)
+            # ── Step 1: Base symbol NFAs ──
+            st.markdown('<div class="step-box">', unsafe_allow_html=True)
+            st.markdown('<div class="step-number">📌 Step 1: Base Symbol NFAs</div>', unsafe_allow_html=True)
+            st.markdown('<div class="step-desc">For every character in your regex, Thompson\'s Construction creates a simple 2-state NFA:</div>', unsafe_allow_html=True)
+            st.code("→ (start) --symbol--> ((accept))", language=None)
+
             symbols = sorted(set(c for c in regex_input if c not in '()|*+?'))
-            st.markdown(f"Characters found: **{', '.join(f'`{s}`' for s in symbols)}**")
-            st.markdown("For each character, a simple 2-state NFA is created:")
-            st.code("→ (start_state) --symbol--> ((accept_state))", language=None)
+            if symbols:
+                cols = st.columns(min(len(symbols), 3))
+                for i, sym in enumerate(symbols):
+                    with cols[i % 3]:
+                        reset_states()
+                        sym_nfa = nfa_for_symbol(sym)
+                        show_step_diagram(f"NFA for symbol '{sym}'", sym_nfa)
             st.markdown('</div>', unsafe_allow_html=True)
             st.divider()
 
-            # Step 2
-            st.markdown('<div class="step-box"><div class="step-number">📌 Step 2: Operators Found in Your Regex</div>', unsafe_allow_html=True)
-            ops_used = []
-            if '|' in regex_input: ops_used.append('**Union** `|` — matches either left or right side')
-            if '*' in regex_input: ops_used.append('**Kleene Star** `*` — zero or more repetitions')
-            if '+' in regex_input: ops_used.append('**Plus** `+` — one or more repetitions')
-            if '?' in regex_input: ops_used.append('**Optional** `?` — zero or one occurrence')
-            ops_used.append('**Concatenation** — placing symbols/groups next to each other')
-            for op in ops_used:
-                st.markdown(f"- {op}")
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.divider()
-
-            # Step 3
-            st.markdown('<div class="step-box"><div class="step-number">📌 Step 3: Construction Rules for Each Operator</div>', unsafe_allow_html=True)
-            st.markdown("**Concatenation ( AB ):**")
+            # ── Step 2: Concatenation ──
+            st.markdown('<div class="step-box">', unsafe_allow_html=True)
+            st.markdown('<div class="step-number">📌 Step 2: Concatenation ( AB )</div>', unsafe_allow_html=True)
+            st.markdown('<div class="step-desc">Concatenation connects NFA_A\'s accept state to NFA_B\'s start via an ε transition:</div>', unsafe_allow_html=True)
             st.code("accept(NFA_A)  →ε→  start(NFA_B)", language=None)
-            if '|' in regex_input:
-                st.markdown("**Union ( A | B ):**")
-                st.code("new_start →ε→ start(NFA_A),  accept(NFA_A) →ε→ new_accept\nnew_start →ε→ start(NFA_B),  accept(NFA_B) →ε→ new_accept", language=None)
-            if '*' in regex_input:
-                st.markdown("**Kleene Star ( A* ):**")
-                st.code("new_start →ε→ start(NFA_A) →ε→ new_accept\nnew_start →ε→ new_accept                   [zero times]\naccept(NFA_A) →ε→ start(NFA_A)             [loop back]", language=None)
-            if '+' in regex_input:
-                st.markdown("**Plus ( A+ ) = A followed by A*:**")
-                st.code("accept(NFA_A) →ε→ start(NFA_A*)   [must go through once, then loop]", language=None)
-            if '?' in regex_input:
-                st.markdown("**Optional ( A? ):**")
-                st.code("new_start →ε→ start(NFA_A) →ε→ new_accept\nnew_start →ε→ new_accept               [skip A entirely]", language=None)
+
+            if len(symbols) >= 2:
+                reset_states()
+                nfa_a = nfa_for_symbol(symbols[0])
+                nfa_b = nfa_for_symbol(symbols[1] if len(symbols) > 1 else symbols[0])
+                concat_nfa = nfa_concatenation(nfa_a, nfa_b)
+                show_step_diagram(
+                    f"Concatenation: '{symbols[0]}' followed by '{symbols[1] if len(symbols)>1 else symbols[0]}'",
+                    concat_nfa
+                )
+            else:
+                st.info("Only one unique symbol in your regex — concatenation uses repeated symbols.")
             st.markdown('</div>', unsafe_allow_html=True)
             st.divider()
 
-            # Step 4
-            st.markdown('<div class="step-box"><div class="step-number">📌 Step 4: Final ε-NFA Result</div>', unsafe_allow_html=True)
+            # ── Step 3: Union (if used) ──
+            if '|' in regex_input:
+                st.markdown('<div class="step-box">', unsafe_allow_html=True)
+                st.markdown('<div class="step-number">📌 Step 3: Union ( A | B )</div>', unsafe_allow_html=True)
+                st.markdown('<div class="step-desc">Union creates a new start state with ε-transitions to both NFA_A and NFA_B, and merges their accept states into one new accept:</div>', unsafe_allow_html=True)
+                st.code(
+                    "new_start →ε→ start(NFA_A),  accept(NFA_A) →ε→ new_accept\n"
+                    "new_start →ε→ start(NFA_B),  accept(NFA_B) →ε→ new_accept",
+                    language=None
+                )
+                reset_states()
+                u_a = nfa_for_symbol(symbols[0])
+                u_b = nfa_for_symbol(symbols[1] if len(symbols) > 1 else symbols[0])
+                union_nfa = nfa_union(u_a, u_b)
+                show_step_diagram(
+                    f"Union: '{symbols[0]}' | '{symbols[1] if len(symbols)>1 else symbols[0]}'",
+                    union_nfa
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.divider()
+
+            # ── Step 4: Kleene Star (if used) ──
+            if '*' in regex_input:
+                st.markdown('<div class="step-box">', unsafe_allow_html=True)
+                st.markdown('<div class="step-number">📌 Step 4: Kleene Star ( A* )</div>', unsafe_allow_html=True)
+                st.markdown('<div class="step-desc">Kleene Star wraps NFA_A with a loop. A new start connects to both NFA_A (to enter) and the new accept (to skip). NFA_A\'s accept loops back to its start:</div>', unsafe_allow_html=True)
+                st.code(
+                    "new_start →ε→ start(NFA_A) →ε→ new_accept\n"
+                    "new_start →ε→ new_accept          [zero times]\n"
+                    "accept(NFA_A) →ε→ start(NFA_A)    [loop back]",
+                    language=None
+                )
+                reset_states()
+                star_inner = nfa_for_symbol(symbols[0])
+                star_nfa = nfa_kleene_star(star_inner)
+                show_step_diagram(f"Kleene Star: '{symbols[0]}*'", star_nfa)
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.divider()
+
+            # ── Step 5: Plus (if used) ──
+            if '+' in regex_input:
+                st.markdown('<div class="step-box">', unsafe_allow_html=True)
+                st.markdown('<div class="step-number">📌 Step 5: Plus ( A+ )</div>', unsafe_allow_html=True)
+                st.markdown('<div class="step-desc">Plus means one or more. It is built as NFA_A followed by NFA_A* — must go through at least once:</div>', unsafe_allow_html=True)
+                st.code("accept(NFA_A) →ε→ start(NFA_A*)   [go through once, then loop]", language=None)
+                reset_states()
+                plus_inner = nfa_for_symbol(symbols[0])
+                plus_nfa = nfa_plus(plus_inner)
+                show_step_diagram(f"Plus: '{symbols[0]}+'", plus_nfa)
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.divider()
+
+            # ── Step 6: Optional (if used) ──
+            if '?' in regex_input:
+                st.markdown('<div class="step-box">', unsafe_allow_html=True)
+                st.markdown('<div class="step-number">📌 Step 6: Optional ( A? )</div>', unsafe_allow_html=True)
+                st.markdown('<div class="step-desc">Optional means zero or one occurrence. New start can either go through NFA_A or skip directly to accept:</div>', unsafe_allow_html=True)
+                st.code(
+                    "new_start →ε→ start(NFA_A) →ε→ new_accept\n"
+                    "new_start →ε→ new_accept             [skip A]",
+                    language=None
+                )
+                reset_states()
+                opt_inner = nfa_for_symbol(symbols[0])
+                opt_nfa = nfa_optional(opt_inner)
+                show_step_diagram(f"Optional: '{symbols[0]}?'", opt_nfa)
+                st.markdown('</div>', unsafe_allow_html=True)
+                st.divider()
+
+            # ── Final Step: Complete NFA ──
+            st.markdown('<div class="step-box">', unsafe_allow_html=True)
+            st.markdown('<div class="step-number">📌 Final Step: Complete ε-NFA for Your Regex</div>', unsafe_allow_html=True)
+            st.markdown('<div class="step-desc">All the above steps are combined together to produce the final ε-NFA for your entire regex:</div>', unsafe_allow_html=True)
             st.markdown(f"""
 | Property | Value |
 |---|---|
@@ -378,32 +549,34 @@ if regex_input and (convert_btn or st.session_state.get('last_regex') == regex_i
 | Accept state | **`{nfa['accept']}`** |
 | Alphabet | **{{{', '.join(dfa['alphabet'])}}}** |
             """)
-            st.success("👉 See the full diagram in the **ε-NFA Diagram** tab!")
+            show_step_diagram(f"Complete ε-NFA for: {regex_input}", nfa)
+            st.success("👉 See the full interactive diagram in the **ε-NFA Diagram** tab!")
             st.markdown('</div>', unsafe_allow_html=True)
             st.divider()
 
-            # Step 5
-            st.markdown('<div class="step-box"><div class="step-number">📌 Step 5: Subset Construction (ε-NFA → DFA)</div>', unsafe_allow_html=True)
+            # ── DFA Conversion Summary ──
+            st.markdown('<div class="step-box">', unsafe_allow_html=True)
+            st.markdown('<div class="step-number">📌 DFA Conversion: Subset Construction</div>', unsafe_allow_html=True)
             st.markdown(f"""
-**1.** Compute **ε-closure** of NFA start state `{nfa['start']}` → becomes **DFA state D0**
+**1.** ε-closure of start state `{nfa['start']}` → **DFA state D0**
 
 **2.** For each symbol in `{{{', '.join(dfa['alphabet'])}}}`:
-   - Compute **move(current_states, symbol)**
-   - Then compute **ε-closure** of the result
-   - This set of NFA states = new DFA state
+   - move(states, symbol) + ε-closure = new DFA state
 
-**3.** Any DFA state containing NFA accept state `{nfa['accept']}` → **DFA accept state**
+**3.** DFA state containing `{nfa['accept']}` → **accept state**
 
-**4.** Repeat until no new DFA states are found
+**4.** Repeat until no new states found
             """)
             st.markdown(f"""
-| Property | Value |
+| | Value |
 |---|---|
 | NFA states | **{len(nfa['states'])}** |
-| DFA states after conversion | **{len(dfa['all_states'])}** |
-| DFA accept states | **{len(dfa['accept_states'])}** |
+| DFA states | **{len(dfa['all_states'])}** |
+| Accept states | **{len(dfa['accept_states'])}** |
             """)
-            st.success("👉 See the final DFA in the **DFA Diagram** tab!")
+            dfa_dot2 = visualize_dfa(dfa, title=f"Final DFA for: {regex_input}")
+            st.graphviz_chart(dfa_dot2.source, use_container_width=True)
+            st.success("👉 See the full interactive DFA in the **DFA Diagram** tab!")
             st.markdown('</div>', unsafe_allow_html=True)
 
     except ValueError as e:
@@ -415,7 +588,7 @@ if regex_input and (convert_btn or st.session_state.get('last_regex') == regex_i
 
 else:
     st.markdown("""
-    <div style="text-align:center; padding: 3em; opacity: 0.6;">
+    <div style="text-align:center; padding: 3em; opacity: 0.5;">
         <h2>⚡ Enter a regular expression above and click Convert</h2>
         <p>Or pick one of the example patterns in the sidebar</p>
     </div>
